@@ -1,5 +1,5 @@
 use crate::{framebuffer::FrameBufferWriter, logger, serial::SerialPort};
-use bootloader_api::info::FrameBufferInfo;
+use bootloader_api::info::{FrameBufferInfo, Optional};
 use conquer_once::spin::OnceCell;
 use core::fmt::Write;
 use log::LevelFilter;
@@ -15,15 +15,19 @@ pub struct LockedLogger {
 }
 
 impl LockedLogger {
-    /// Create a new instance that logs to the given framebuffer.
+    /// Create a new instance that logs to serial.
     pub fn new(
-        framebuffer: &'static mut [u8],
-        info: FrameBufferInfo,
+        framebuffer: Option<&'static mut [u8]>,
+        info: Option<FrameBufferInfo>,
         frame_buffer_logger_status: bool,
         serial_logger_status: bool,
     ) -> Self {
         let framebuffer = match frame_buffer_logger_status {
-            true => Some(Spinlock::new(FrameBufferWriter::new(framebuffer, info))),
+            true => Some(Spinlock::new(FrameBufferWriter::new(
+                framebuffer.expect("when creating locked logger frame buffer was enabled bu was not supplied ([u8]buffer)"),
+                info.expect(
+                    "when creating locked logger frame buffer was enabled but was not supplied(FrameBufferInfo)"),
+            ))),
             false => None,
         };
 
@@ -53,8 +57,8 @@ impl LockedLogger {
 }
 
 pub fn init_logger(
-    framebuffer: &'static mut [u8],
-    info: FrameBufferInfo,
+    framebuffer: Option<&'static mut [u8]>,
+    info: Option<FrameBufferInfo>,
     log_level: LevelFilter,
     frame_buffer_logger_status: bool,
     serial_logger_status: bool,
@@ -67,8 +71,12 @@ pub fn init_logger(
             serial_logger_status,
         )
     });
-    log::set_logger(logger).expect("logger already set");
+
+    log::set_logger(logger);
     log::set_max_level(convert_level(log_level));
+    log::info!(
+        " initialized logs with options : frame_buffer_logger_status {frame_buffer_logger_status} && serial_logger_status {serial_logger_status}"
+    );
     log::info!("Framebuffer info: {:?}", info);
 }
 fn convert_level(level: LevelFilter) -> log::LevelFilter {

@@ -1,4 +1,4 @@
-use bootloader_api::info::{FrameBufferInfo, PixelFormat};
+use bootloader_api::info::{FrameBuffer, FrameBufferInfo, PixelFormat};
 use core::{fmt, ptr};
 use font_constants::BACKUP_CHAR;
 use noto_sans_mono_bitmap::{
@@ -7,25 +7,19 @@ use noto_sans_mono_bitmap::{
 
 use crate::logger;
 
-pub fn init_frame_buffer(boot_info: &'static mut bootloader_api::BootInfo) {
-    let framebuffer = boot_info
-        .framebuffer
-        .as_mut()
-        .expect("No framebuffer provided");
-
+pub fn init_frame_buffer(framebuffer: &'static mut FrameBuffer) {
     let framebuffer_info: FrameBufferInfo = framebuffer.info();
     let buffer = framebuffer.buffer_mut();
 
-    // let mut writer = FrameBufferWriter::new(buffer, framebuffer_info);
     logger::init_logger(
-        buffer,
-        framebuffer_info,
+        Some(buffer),
+        Some(framebuffer_info),
         log::LevelFilter::Debug,
         true,
         true,
     );
 
-    log::debug!("OK!:Frame buffer init");
+    log::debug!("OK:Frame buffer init");
 }
 
 /// Additional vertical space between lines
@@ -44,6 +38,7 @@ mod font_constants {
     /// enables multiple characters to be side-by-side and appear optically in one line in a natural way.
     pub const CHAR_RASTER_HEIGHT: RasterHeight = RasterHeight::Size16;
 
+    /// KK  
     /// The width of each single symbol of the mono space font.
     pub const CHAR_RASTER_WIDTH: usize = get_raster_width(FontWeight::Regular, CHAR_RASTER_HEIGHT);
 
@@ -146,8 +141,8 @@ impl FrameBufferWriter {
     fn write_pixel(&mut self, x: usize, y: usize, intensity: u8) {
         let pixel_offset = y * self.info.stride + x;
         let color = match self.info.pixel_format {
-            PixelFormat::Rgb => [intensity, intensity, intensity / 2, 0],
-            PixelFormat::Bgr => [intensity / 2, intensity, intensity, 0],
+            PixelFormat::Rgb => [intensity, intensity, intensity, 0],
+            PixelFormat::Bgr => [intensity, intensity, intensity, 0],
             PixelFormat::U8 => [if intensity > 200 { 0xf } else { 0 }, 0, 0, 0],
             other => {
                 // set a supported (but invalid) pixel format before panicking to avoid a double
