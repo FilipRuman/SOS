@@ -39,11 +39,11 @@ pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 pub fn init() {
-    IDT.load();
-
     log::debug!("IDT initialized!");
 
     unsafe { PICS.lock().initialize() };
+    IDT.load();
+
     x86_64::instructions::interrupts::enable();
 
     log::debug!("Hardware interrupts initialized!");
@@ -51,9 +51,12 @@ pub fn init() {
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     unsafe {
-        // PICS.lock()
-        //     .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
-        log::debug!(".");
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+        x86_64::instructions::interrupts::int3(); // new
+        panic!("TIMER");
+
+        log::debug!("TIMER");
     }
 }
 

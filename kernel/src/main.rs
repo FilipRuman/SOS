@@ -37,12 +37,12 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
 }
 
 fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
+    interrupts::init();
     let framebuffer = boot_info
         .framebuffer
         .as_mut()
         .expect("No framebuffer provided");
     framebuffer::init_frame_buffer(framebuffer);
-    interrupts::init();
 
     let physical_memory_offset = boot_info
         .physical_memory_offset

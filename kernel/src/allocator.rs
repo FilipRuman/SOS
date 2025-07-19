@@ -1,11 +1,34 @@
-use alloc::alloc::{GlobalAlloc, Layout};
+mod FixedSize;
+
+use alloc::{
+    alloc::{GlobalAlloc, Layout},
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
+use log::debug;
 
 use core::ptr::null_mut;
 
 use linked_list_allocator::LockedHeap;
 
+pub struct Locked<T> {
+    inner: spin::Mutex<T>,
+}
+impl<T> Locked<T> {
+    pub const fn new(inner: T) -> Self {
+        Locked {
+            inner: spin::Mutex::new(inner),
+        }
+    }
+
+    pub fn lock(&self) -> spin::MutexGuard<T> {
+        self.inner.lock()
+    }
+}
+
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap::empty();
+static ALLOCATOR: Locked<BuddyAllocator> = Locked::new(BuddyAllocator::new());
 
 pub struct Dummy;
 unsafe impl GlobalAlloc for Dummy {
@@ -24,8 +47,10 @@ use x86_64::{
     },
 };
 
+use crate::allocator::FixedSize::BuddyAllocator;
+
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
+pub const HEAP_SIZE: usize = 10000 * 1024; // 10000 KiB
 
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
@@ -51,5 +76,84 @@ pub fn init_heap(
         ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }
     log::debug!("allocator was initialized- you can use alloc functions from now on!");
+
+    // allocator_tests();
     Ok(())
+}
+
+pub fn allocator_tests() {
+    // debug!("free list {:#?}", ALLOCATOR.lock().free_list);
+    let mut init_large_bits = 1;
+
+    debug!(
+        "============================================== init ====================================="
+    );
+    {
+        for _ in 0..5 {
+            let x = Box::new(52usize);
+
+            let w = Box::new(52usize);
+
+            let d = Box::new(52usize);
+
+            let s = Box::new(52usize);
+
+            let l = Box::new(52usize);
+
+            let k = Box::new(52usize);
+
+            let j = Box::new(52usize);
+        }
+
+        debug!(
+            "============================================== alloc ====================================="
+        );
+        //debug!("free list {:#?}", ALLOCATOR.lock().free_list);
+    }
+
+    debug!(
+        "============================================== dealoc ====================================="
+    );
+
+    debug!("free list {:#?}", ALLOCATOR.lock().free_list);
+
+    debug!("free list {:#?}", ALLOCATOR.lock().free_list);
+
+    // debug!("free list {:#?}", ALLOCATOR.lock().free_list);
+
+    // for _ in 0..100 {
+    // {
+    //     log::debug!("started allocator tests!");
+    //     let string: String = "test_string".to_string();
+    //
+    //     let mut test_struct_vec = Vec::new();
+    //     for _ in 0..10 {
+    //         test_struct_vec.push(ReallyBigTestStruct::new());
+    //     }
+    //     debug!("tst:{}", test_struct_vec.len());
+    //     debug!("string: {string}");
+    //     assert_eq!(string.as_str(), "test_string");
+    // }
+}
+
+pub struct ReallyBigTestStruct {
+    pub array: [usize; 20],
+    pub vec: Vec<usize>,
+    pub test: String,
+
+    pub array3: [usize; 30],
+    pub array2: [usize; 100],
+    pub test_1: String,
+}
+impl ReallyBigTestStruct {
+    pub fn new() -> ReallyBigTestStruct {
+        ReallyBigTestStruct {
+            array: [0; 20],
+            array2: [20; 100],
+            array3: [3; 30],
+            test_1: "IWERIOTIEROITROITEWOI:WRETIWEOROTIUERIOTIUERUWRTUIOREWTUREHGJKDHJdkskljfdgglshgjkdkjldgflgflhkgdslhkjfgdsjsdffsdlgkhfghjfkdsgfhjdkldfsgklhjkgdfshjklfdghkhjkgfdslkdgkhgflhjskdfglskhljksdgfhkjsdfgslkhdfhdlkjfghjkglfhklhskdfghjsjhlk".to_string(),
+            vec: [20; 100].to_vec(),
+            test: "IWERIOTIEROITROITEWOI:WRETIWEOROTIUERIOTIUERUWRTUIOREWTUREHGJKDHJdkskljfdgglshgjkdkjldgflgflhkgdslhkjfgdsjsdffsdlgkhfghjfkdsgfhjdkldfsgklhjkgdfshjklfdghkhjkgfdslkdgkhgflhjskdfglskhljksdgfhkjsdfgslkhdfhdlkjfghjkglfhklhskdfghjsjhlk".to_string(),
+        }
+    }
 }
