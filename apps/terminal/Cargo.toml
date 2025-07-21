@@ -1,0 +1,9 @@
+[package]
+name = "terminal"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+os = {path = "../../os/"}
+log = "0.4"

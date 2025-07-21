@@ -10,8 +10,6 @@ use log::debug;
 
 use core::ptr::null_mut;
 
-use linked_list_allocator::LockedHeap;
-
 pub struct Locked<T> {
     inner: spin::Mutex<T>,
 }

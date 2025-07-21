@@ -12,15 +12,9 @@ use bootloader_api::{
 };
 use log::debug;
 
-pub static BOOTLOADER_CONFIG: BootloaderConfig = {
-    let mut config = BootloaderConfig::new_default();
-
-    config.mappings.physical_memory = Some(Mapping::Dynamic);
-    config
-};
+use crate::task::{StaticTask, keyboard::ScancodeStream};
 
 // add a `config` argument to the `entry_point` macro call
-entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 mod allocator;
 mod framebuffer;
 mod interrupts;
@@ -29,15 +23,9 @@ mod memory;
 mod panic;
 mod qemu;
 mod serial;
+mod task;
 
-fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
-    init_kernel(boot_info);
-
-    hlt_loop();
-}
-
-fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
-
+pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     let framebuffer = boot_info
         .framebuffer
         .as_mut()
@@ -58,9 +46,15 @@ fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
 
     debug!("Initialization fished successfully!");
+    let mut executor = task::executor::Executor::new(); // new
+
+    task::executor::TASK_SPAWNER.spawn(StaticTask::new(task::keyboard::print_keypresses()));
+
+    executor.run();
 }
 
 pub fn hlt_loop() -> ! {
+    log::warn!("entering hlt loop!");
     loop {
         x86_64::instructions::hlt();
     }

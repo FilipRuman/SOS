@@ -1,0 +1,12 @@
+[package]
+name = "entry_point"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+log = "0.4"
+os = {path = "../os"}
+apps = {path = "../apps"}
+kernel = {path = "../kernel"}
+bootloader_api = "0.11"
