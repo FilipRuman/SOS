@@ -1,83 +1,90 @@
-use crate::{framebuffer::FrameBufferWriter, logger, serial::SerialPort};
-use bootloader_api::info::{FrameBufferInfo, Optional};
+use crate::{logger, serial::SerialPort};
+use alloc::vec::Vec;
 use conquer_once::spin::OnceCell;
 use core::fmt::Write;
-use log::LevelFilter;
+use crossbeam_queue::ArrayQueue;
+use log::{LevelFilter, warn};
+use spin::Mutex;
 use spinning_top::Spinlock;
 
-/// The global logger instance used for the `log` crate.
-pub static LOGGER: OnceCell<LockedLogger> = OnceCell::uninit();
-
-/// A logger instance protected by a spinlock.
 pub struct LockedLogger {
-    framebuffer: Option<Spinlock<FrameBufferWriter>>,
-    serial: Option<Spinlock<SerialPort>>,
+    serial: Spinlock<SerialPort>,
 }
+
+static LOGGER: OnceCell<LockedLogger> = OnceCell::uninit();
+
+pub struct LogStream {
+    _private: (),
+}
+impl LogStream {
+    pub fn new() -> Self {
+        LOG_QUE
+            .try_init_once(|| ArrayQueue::new(32))
+            .expect("LogStream::new should only be called once");
+        LogStream { _private: () }
+    }
+}
+use core::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+use futures_util::stream::Stream;
+
+use futures_util::task::AtomicWaker;
+
+static WAKER: AtomicWaker = AtomicWaker::new();
+
+pub const MAX_LOG_SIZE: usize = 80;
+
+impl Stream for LogStream {
+    type Item = [u8; MAX_LOG_SIZE];
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<[u8; MAX_LOG_SIZE]>> {
+        let queue = LOG_QUE.try_get().expect("log queue not initialized");
+
+        // fast path
+        if let Some(log) = queue.pop() {
+            return Poll::Ready(Some(log));
+        }
+        WAKER.register(cx.waker());
+        match queue.pop() {
+            Some(log) => {
+                WAKER.take();
+                Poll::Ready(Some(log))
+            }
+            None => Poll::Pending,
+        }
+    }
+}
+
+use futures_util::stream::StreamExt;
+
+pub(crate) async fn handel_log_que() {
+    let mut stream = LogStream::new();
+    while let Some(log) = stream.next().await {
+        for listener in ON_LOG_LISTENERS.lock().iter() {
+            listener(&log);
+        }
+    }
+}
+pub type OnLogFunction = fn(&[u8; MAX_LOG_SIZE]);
+pub static ON_LOG_LISTENERS: Mutex<Vec<OnLogFunction>> = Mutex::new(Vec::new());
 
 impl LockedLogger {
-    /// Create a new instance that logs to serial.
-    pub fn new(
-        framebuffer: Option<&'static mut [u8]>,
-        info: Option<FrameBufferInfo>,
-        frame_buffer_logger_status: bool,
-        serial_logger_status: bool,
-    ) -> Self {
-        let framebuffer = match frame_buffer_logger_status {
-            true => Some(Spinlock::new(FrameBufferWriter::new(
-                framebuffer.expect("when creating locked logger frame buffer was enabled bu was not supplied ([u8]buffer)"),
-                info.expect(
-                    "when creating locked logger frame buffer was enabled but was not supplied(FrameBufferInfo)"),
-            ))),
-            false => None,
-        };
-
-        let serial = match serial_logger_status {
-            true => Some(Spinlock::new(unsafe { SerialPort::init() })),
-            false => None,
-        };
-
+    pub fn new() -> Self {
         LockedLogger {
-            framebuffer,
-            serial,
-        }
-    }
-
-    /// Force-unlocks the logger to prevent a deadlock.
-    ///
-    /// ## Safety
-    /// This method is not memory safe and should be only used when absolutely necessary.
-    pub unsafe fn force_unlock(&self) {
-        if let Some(framebuffer) = &self.framebuffer {
-            unsafe { framebuffer.force_unlock() };
-        }
-        if let Some(serial) = &self.serial {
-            unsafe { serial.force_unlock() };
+            serial: Spinlock::new(unsafe { SerialPort::init() }),
         }
     }
 }
 
-pub fn init_logger(
-    framebuffer: Option<&'static mut [u8]>,
-    info: Option<FrameBufferInfo>,
-    log_level: LevelFilter,
-    frame_buffer_logger_status: bool,
-    serial_logger_status: bool,
-) {
-    let logger = logger::LOGGER.get_or_init(move || {
-        logger::LockedLogger::new(
-            framebuffer,
-            info,
-            frame_buffer_logger_status,
-            serial_logger_status,
-        )
-    });
+pub fn init_logger(log_level: LevelFilter) {
+    let logger = logger::LOGGER.get_or_init(LockedLogger::new);
 
-    log::set_logger(logger);
+    log::set_logger(logger).expect("setting logger did not succeed");
     log::set_max_level(convert_level(log_level));
-    log::info!(
-        " initialized logs with options : frame_buffer_logger_status {frame_buffer_logger_status} && serial_logger_status {serial_logger_status}"
-    );
-    log::info!("Framebuffer info: {:?}", info);
+    LogStream::new();
+    log::info!("initialized logs");
 }
 fn convert_level(level: LevelFilter) -> log::LevelFilter {
     match level {
@@ -89,21 +96,60 @@ fn convert_level(level: LevelFilter) -> log::LevelFilter {
         LevelFilter::Trace => log::LevelFilter::Trace,
     }
 }
+
+static LOG_QUE: OnceCell<ArrayQueue<[u8; 80]>> = OnceCell::uninit();
 impl log::Log for LockedLogger {
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
         true
     }
 
     fn log(&self, record: &log::Record) {
-        if let Some(framebuffer) = &self.framebuffer {
-            let mut framebuffer = framebuffer.lock();
-            writeln!(framebuffer, "{:5}: {}", record.level(), record.args()).unwrap();
-        }
-        if let Some(serial) = &self.serial {
-            let mut serial = serial.lock();
-            writeln!(serial, "{:5}: {}", record.level(), record.args()).unwrap();
+        let mut serial = self.serial.lock();
+        writeln!(serial, "{:5}: {}", record.level(), record.args()).unwrap();
+        if let Ok(queue) = LOG_QUE.try_get() {
+            let mut buffer = [0u8; 80];
+            let mut buffer_writer = BufferWriter::new(&mut buffer);
+            match writeln!(buffer_writer, "{:5}: {}", record.level(), record.args()) {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("err while writing log to buffer:{e}")
+                }
+            };
+
+            if queue.push(buffer).is_err() {
+                writeln!(serial, "WARN: log queue full; dropping log").unwrap();
+            }
+
+            WAKER.wake();
+        } else {
+            warn!("log queue uninitialized");
         }
     }
 
     fn flush(&self) {}
+}
+
+struct BufferWriter<'a> {
+    buffer: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> BufferWriter<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self {
+            buffer: buf,
+            pos: 0,
+        }
+    }
+}
+
+impl<'a> Write for BufferWriter<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let available = self.buffer.len().saturating_sub(self.pos);
+        let to_copy = available.min(bytes.len());
+        self.buffer[self.pos..self.pos + to_copy].copy_from_slice(&bytes[..to_copy]);
+        self.pos += to_copy;
+        Ok(())
+    }
 }

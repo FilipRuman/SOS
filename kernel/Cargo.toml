@@ -8,7 +8,6 @@ edition = "2024"
 bootloader_api = "0.11.10"
 
 x86_64 = {version= "0.15.2", features= ["abi_x86_interrupt"]}
-noto-sans-mono-bitmap = "0.3.1"
 log = "0.4.27"
 conquer-once = { version = "0.4.0", default-features = false }
 spinning_top = "0.3.0"
@@ -21,3 +20,5 @@ pc-keyboard = "0.8.0"
 crossbeam-queue = {version= "0.3.11",default-features= false,features= ["alloc"]}
 futures-util = {version = "0.3.4",default-features = false,features = ["alloc"]}
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+heapless= "0.8"
+x86 = "0.52"

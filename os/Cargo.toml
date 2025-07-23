@@ -1,12 +1,18 @@
+
 [package]
 name = "os"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+
 bootloader_api = "0.11.10"
 kernel = {path = "../kernel"}
 log = "0.4"
-
+pc-keyboard = "0.8.0"
+spin = "0.10.0"
+conquer-once = { version = "0.4.0", default-features = false }
+noto-sans-mono-bitmap = "0.3.1"
+lazy_static = {version = "1.5", features = ["spin_no_std"]}
 
 

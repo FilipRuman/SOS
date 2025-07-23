@@ -1,9 +1,0 @@
-[package]
-name = "apps"
-version = "0.1.0"
-edition = "2024"
-
-
-[dependencies]
-log = "0.4"
-terminal = {path = "./terminal"}

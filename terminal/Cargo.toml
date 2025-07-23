@@ -2,8 +2,9 @@
 name = "terminal"
 version = "0.1.0"
 edition = "2024"
-
-
 [dependencies]
-os = {path = "../../os/"}
+os = {path = "../os"}
 log = "0.4"
+
+spin = "0.10.0"
+pc-keyboard = "0.8.0"

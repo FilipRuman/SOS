@@ -32,6 +32,9 @@ lazy_static! {
     };
 }
 
+
+
+
 use pic8259::ChainedPics;
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
@@ -40,6 +43,7 @@ pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
 pub fn init() {
+    // x86_64::ap
     log::debug!("IDT initialized!");
 
     IDT.load();
@@ -50,6 +54,8 @@ pub fn init() {
 
     log::debug!("Hardware interrupts initialized!");
 }
+
+
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     unsafe {
@@ -79,7 +85,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
-    crate::task::keyboard::add_scancode(scancode); // new
+    crate::task::keyboard::add_scancode(scancode);
 
     unsafe {
         PICS.lock()

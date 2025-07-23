@@ -1,5 +1,3 @@
-
-
 fn main() {
     // read env variables that were set in build script
     let uefi_path = env!("UEFI_PATH");
@@ -18,6 +16,10 @@ fn main() {
             .arg(format!("format=raw,file={bios_path}"));
     }
     cmd.arg("-serial").arg("stdio");
+
+    cmd.arg("-device")
+        .arg("isa-debug-exit,iobase=0xf4,iosize=0x04");
+
     // cmd.arg("-d").arg("int");
     // cmd.arg("-D").arg("qemu.log");
     let mut child = cmd.spawn().unwrap();

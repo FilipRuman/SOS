@@ -9,14 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
-name = "apps"
-version = "0.1.0"
-dependencies = [
- "log",
- "terminal",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -159,11 +151,11 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 name = "entry_point"
 version = "0.1.0"
 dependencies = [
- "apps",
  "bootloader_api",
  "kernel",
  "log",
  "os",
+ "terminal",
 ]
 
 [[package]]
@@ -285,6 +277,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -309,15 +320,16 @@ dependencies = [
  "crossbeam-queue",
  "futures",
  "futures-util",
+ "heapless",
  "lazy_static",
  "log",
- "noto-sans-mono-bitmap",
  "pc-keyboard",
  "pic8259",
  "spin 0.10.0",
  "spinning_top",
  "uart_16550",
  "volatile 0.6.1",
+ "x86",
  "x86_64",
 ]
 
@@ -400,8 +412,13 @@ name = "os"
 version = "0.1.0"
 dependencies = [
  "bootloader_api",
+ "conquer-once",
  "kernel",
+ "lazy_static",
  "log",
+ "noto-sans-mono-bitmap",
+ "pc-keyboard",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -582,6 +599,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "stable_deref_trait"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
 name = "syn"
 version = "2.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -617,6 +640,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "os",
+ "pc-keyboard",
+ "spin 0.10.0",
 ]
 
 [[package]]
