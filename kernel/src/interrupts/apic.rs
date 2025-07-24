@@ -1,24 +1,18 @@
-use core::ptr::write_volatile;
-
-use acpi::PhysicalMapping;
-use log::debug;
-use spin::Mutex;
-use x86::apic::{ApicControl, ApicId};
+use log::{debug, *};
+use x86::apic::ApicControl;
 use x86_64::{
     PhysAddr, VirtAddr,
-    structures::paging::{
-        FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB,
-    },
+    structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB},
 };
-const APIC_LEN: usize = 1024;
 
 fn io_apic() -> x86::apic::ioapic::IoApic {
     unsafe { x86::apic::ioapic::IoApic::new(IOAPIC_ADDR) }
 }
 fn xapic() -> x86::apic::xapic::XAPIC {
-    let apic_address = VirtAddr::new(LOCAL_APIC_ADDR as u64);
+    let apic_address = VirtAddr::new(LOCAL_APIC_ADDR);
     let pointer = apic_address.as_mut_ptr();
 
+    const APIC_LEN: usize = 1024;
     let slice: &'static mut [u32] = unsafe { core::slice::from_raw_parts_mut(pointer, APIC_LEN) };
 
     x86::apic::xapic::XAPIC::new(slice)
@@ -28,8 +22,7 @@ fn init_xapic(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) {
-
-    let apic_address = VirtAddr::new(LOCAL_APIC_ADDR as u64);
+    let apic_address = VirtAddr::new(LOCAL_APIC_ADDR);
     let page = Page::containing_address(apic_address);
     let frame = PhysFrame::containing_address(PhysAddr::new(LOCAL_APIC_ADDR));
 
@@ -42,16 +35,26 @@ fn init_xapic(
     };
 
     let mut xapic = xapic();
-    debug!("xapic id {:?}", xapic);
-    debug!("xapic id {:?}", xapic.id());
-    // xapic.attach();
-
-    debug!("xapic bsp {:?}", xapic.bsp());
-    // xapic.
     xapic.attach();
+}
 
-    // unsafe { xapic.ipi_init(ApicId::XApic(0)) };
-    // xapic.tsc_enable(1);
+fn write_lapic(offset: u64, value: u32) {
+    let reg = (LOCAL_APIC_ADDR + offset) as *mut u32;
+    unsafe { core::ptr::write_volatile(reg, value) };
+}
+pub fn setup_xapic_timer() {
+    let divide: u8 = 0b1011;
+    // Divide config: 0b1011 = divide by 1
+    write_lapic(x86::apic::xapic::XAPIC_TIMER_DIV_CONF as u64, divide as u32);
+
+    let vector: u8 = 0x20;
+    // LVT Timer: set mode = periodic (bit 17), and vector
+    let lvt_value = (1 << 17) | (vector as u32); // Periodic | vector
+    write_lapic(x86::apic::xapic::XAPIC_LVT_TIMER as u64, lvt_value);
+
+    let init_count: u32 = 10_000_000;
+    // Initial Count: how long until interrupt fires
+    write_lapic(x86::apic::xapic::XAPIC_TIMER_INIT_COUNT as u64, init_count);
 }
 
 // WARN: THIS MIGHT NOT BE TRUE!
@@ -71,8 +74,8 @@ lazy_static! {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
 
-        idt[KEYBOARD_IRQ + IRQ_BASE].set_handler_fn(keyboard_interrupt_handler);
         idt[TIMER_IRQ + IRQ_BASE].set_handler_fn(timer_interrupt_handler);
+        idt[KEYBOARD_IRQ + IRQ_BASE].set_handler_fn(keyboard_interrupt_handler);
 
         idt.page_fault.set_handler_fn(page_fault_handler);
         idt
@@ -91,15 +94,17 @@ pub fn init(
 
     IDT.load();
 
-    log::debug!("IDT initialized!");
-    let mut io_apic = io_apic();
+    debug!("IDT initialized!");
+    setup_xapic_timer();
 
+    let mut io_apic = io_apic();
     io_apic.enable(KEYBOARD_IRQ, 0);
-    io_apic.enable(TIMER_IRQ, 0);
 
     x86_64::instructions::interrupts::enable();
 
-    log::debug!("Hardware interrupts initialized!");
+    debug!("Hardware interrupts initialized!");
+
+    debug!("cpuid {:?}", x86::cpuid::CpuId::new());
 }
 
 fn map_memory_for_io_apic(
@@ -119,14 +124,10 @@ fn map_memory_for_io_apic(
     };
 }
 
-use x86_64::{
-    instructions::port,
-    structures::idt::{InterruptDescriptorTable, PageFaultErrorCode},
-};
+use x86_64::structures::idt::{InterruptDescriptorTable, PageFaultErrorCode};
 
-use crate::{hlt_loop, interrupts, memory::BootInfoFrameAllocator};
+use crate::hlt_loop;
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    debug!("Timer!");
     xapic().eoi();
 }
 
@@ -142,33 +143,17 @@ extern "x86-interrupt" fn page_fault_handler(
     log::error!("{:#?}", stack_frame);
     hlt_loop();
 }
-const LAPIC_BASE: u64 = 0xFEE00000;
-const EOI_OFFSET: usize = 0xB0;
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
 
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
-    log::debug!("keyboard 1");
     crate::task::keyboard::add_scancode(scancode);
 
-    log::debug!("keyboard 2");
-
-    // xapic().eoi();
-    unsafe {
-        interrupts::pic::PICS
-            .lock()
-            .notify_end_of_interrupt(KEYBOARD_IRQ)
-    };
-
-    let eoi_reg = (LAPIC_BASE + 176 as u64) as *mut u32;
-    unsafe { write_volatile(eoi_reg, 0) };
-    //
-    log::debug!("keyboard 3");
-
-    // io_apic().enable(KEYBOARD_IRQ, 0);
+    xapic().eoi();
 }
+// not working due to recent regression in nightly, have to try later
 // extern "x86-interrupt" fn double_fault_handler(
 //     stack_frame: InterruptStackFrame,
 //     _error_code: u64,
