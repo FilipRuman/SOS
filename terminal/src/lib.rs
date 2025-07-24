@@ -14,7 +14,6 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use lazy_static::lazy_static;
 use log::warn;
 use os::graphics::{text::font_constants::CHAR_RASTER_HEIGHT, *};
 use pc_keyboard::DecodedKey;
@@ -76,7 +75,6 @@ const BACKGROUND_COMMAND: Color = Color {
 };
 const CHAR_WIDTH: u16 = os::graphics::text::font_constants::CHAR_RASTER_WIDTH as u16;
 const CHAR_HEIGHT: u16 = os::graphics::text::font_constants::CHAR_RASTER_HEIGHT.val() as u16;
-
 
 impl os::App for Terminal {
     fn on_key_pressed(&mut self, key: &DecodedKey) {
@@ -167,7 +165,7 @@ impl os::App for Terminal {
     }
 
     fn init(&mut self, graphics_data: WindowSettings) {
-        let app = Box::new(self) as os::AppType;
+        // let app = Box::new(self) as os::AppType;
         // os::ON_LOG_LISTENERS.lock().push(Mutex::new();
         self.window_settings = graphics_data;
 

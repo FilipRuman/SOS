@@ -22,3 +22,4 @@ futures-util = {version = "0.3.4",default-features = false,features = ["alloc"]}
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 heapless= "0.8"
 x86 = "0.52"
+acpi = "5.2"

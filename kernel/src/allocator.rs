@@ -61,7 +61,6 @@ pub fn init_heap(
         let heap_end_page = Page::containing_address(heap_end);
         Page::range_inclusive(heap_start_page, heap_end_page)
     };
-
     for page in page_range {
         let frame = frame_allocator
             .allocate_frame()

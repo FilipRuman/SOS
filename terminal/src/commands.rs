@@ -36,6 +36,10 @@ pub fn init_commands() -> BTreeMap<String, OnCommandFunction> {
             (|_, _| os::shutdown()) as OnCommandFunction,
         ),
         ("logs".to_string(), set_log_level as OnCommandFunction),
+        // (
+        //     "disable-pic".to_string(),
+        //     (|_, _| kernel::interrupts::disable_pic()) as OnCommandFunction,
+        // ),
     ])
 }
 impl Terminal {

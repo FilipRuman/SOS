@@ -83,7 +83,6 @@ pub fn init_logger(log_level: LevelFilter) {
 
     log::set_logger(logger).expect("setting logger did not succeed");
     log::set_max_level(convert_level(log_level));
-    LogStream::new();
     log::info!("initialized logs");
 }
 fn convert_level(level: LevelFilter) -> log::LevelFilter {
@@ -97,7 +96,7 @@ fn convert_level(level: LevelFilter) -> log::LevelFilter {
     }
 }
 
-static LOG_QUE: OnceCell<ArrayQueue<[u8; 80]>> = OnceCell::uninit();
+static LOG_QUE: OnceCell<ArrayQueue<[u8; MAX_LOG_SIZE]>> = OnceCell::uninit();
 impl log::Log for LockedLogger {
     fn enabled(&self, _metadata: &log::Metadata) -> bool {
         true
@@ -106,8 +105,12 @@ impl log::Log for LockedLogger {
     fn log(&self, record: &log::Record) {
         let mut serial = self.serial.lock();
         writeln!(serial, "{:5}: {}", record.level(), record.args()).unwrap();
+        if !LOG_QUE.is_initialized() {
+            return;
+        }
+
         if let Ok(queue) = LOG_QUE.try_get() {
-            let mut buffer = [0u8; 80];
+            let mut buffer = [0u8; MAX_LOG_SIZE];
             let mut buffer_writer = BufferWriter::new(&mut buffer);
             match writeln!(buffer_writer, "{:5}: {}", record.level(), record.args()) {
                 Ok(_) => {}

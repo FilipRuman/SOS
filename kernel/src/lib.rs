@@ -16,20 +16,31 @@ use spin::mutex::Mutex;
 use crate::task::{StaticTask, keyboard::ScancodeStream};
 
 // add a `config` argument to the `entry_point` macro call
-mod allocator;
-mod framebuffer;
+pub mod allocator;
+pub mod framebuffer;
 pub mod graphics;
-mod interrupts;
+pub mod interrupts;
 pub mod logger;
-mod memory;
-mod panic;
+pub mod memory;
+pub mod panic;
 pub mod qemu;
-mod serial;
+pub mod serial;
 pub mod task;
 
 pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     logger::init_logger(log::LevelFilter::Debug);
-    interrupts::init();
+    let physical_memory_offset = boot_info
+        .physical_memory_offset
+        .as_ref()
+        .expect("physical memory offset was not provided by bootloader!")
+        .clone();
+
+    let memory_map = MemoryRegions::from(boot_info.memory_regions.as_mut());
+
+    let (mut mapper, mut frame_allocator) =
+        unsafe { memory::init_mem(physical_memory_offset, memory_map) };
+
+    interrupts::init(&mut mapper, &mut frame_allocator);
 
     let framebuffer = boot_info
         .framebuffer
@@ -38,16 +49,6 @@ pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     // framebuffer::init_frame_buffer(framebuffer);
     graphics::RENDERER
         .get_or_init(move || Mutex::new(graphics::FrameBufferRenderer::new(framebuffer)));
-
-    let physical_memory_offset = boot_info
-        .physical_memory_offset
-        .as_ref()
-        .expect("physical memory offset was not provided by bootloader!")
-        .clone();
-
-    let memory_map = MemoryRegions::from(boot_info.memory_regions.as_mut());
-    let (mut mapper, mut frame_allocator) =
-        unsafe { memory::init_mem(physical_memory_offset, memory_map) };
 
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
 

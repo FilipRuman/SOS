@@ -1,5 +1,7 @@
 use bootloader_api::BootInfo;
 use bootloader_api::info::MemoryRegionKind;
+use conquer_once::spin::OnceCell;
+use spin::Mutex;
 use x86_64::PhysAddr;
 use x86_64::{VirtAddr, structures::paging::PageTable};
 
