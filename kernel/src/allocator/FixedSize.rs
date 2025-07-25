@@ -35,8 +35,6 @@ impl AllocatorNode {
         let r_start_addr = self.start_addr + new_size;
         let r_pointer = (r_start_addr) as *mut AllocatorNode;
 
-        check_pointer_safety(r_pointer);
-
         unsafe {
             r_pointer.write(AllocatorNode {
                 start_addr: r_start_addr,
@@ -46,9 +44,11 @@ impl AllocatorNode {
             })
         };
 
+        check_pointer_safety(r_pointer, "r_pointer");
+
         let l_pointer = self.start_addr as *mut AllocatorNode;
-        check_pointer_safety(l_pointer);
         // this will override this node, so be careful!
+
         unsafe {
             l_pointer.write(AllocatorNode {
                 start_addr: self.start_addr,
@@ -57,6 +57,7 @@ impl AllocatorNode {
                 size: new_size,
             })
         };
+        check_pointer_safety(l_pointer, "l_pointer");
 
         // dereferences the raw pointer to access the value stored at that memory location.
         // then take a mutable reference to that dereferenced value
@@ -64,13 +65,18 @@ impl AllocatorNode {
     }
 }
 
-fn check_pointer_safety(pointer: *mut AllocatorNode) {
+fn check_pointer_safety(pointer: *mut AllocatorNode, pointer_name: &str) {
     assert_eq!(
         (pointer as usize) % core::mem::align_of::<AllocatorNode>(),
         0,
-        "dealloc_ptr is misaligned for AllocatorNode"
+        "dealloc_ptr is misaligned for AllocatorNode, with name: {pointer_name}"
     );
     assert!(!pointer.is_null(), "dealloc_ptr is null");
+    assert_eq!(
+        pointer as usize,
+        unsafe { (*pointer).start_addr },
+        "AllocatorNode start address != ptr address, with name: {pointer_name}"
+    )
 }
 
 pub fn free_list_index(size: usize) -> usize {
@@ -305,12 +311,14 @@ impl BuddyAllocator {
         assert!(!dealloc_ptr.is_null(), "dealloc_ptr is null");
 
         let heap_alloc_node = unsafe {
-            let node_pointer = dealloc_ptr as *mut AllocatorNode;
+            let node_pointer = node.start_addr as *mut AllocatorNode;
 
             node_pointer.write(node);
 
             &mut *node_pointer
         };
+
+        check_pointer_safety(heap_alloc_node, "heap_alloc_node");
 
         self.add_to_free_list(free_list_index, heap_alloc_node);
     }
@@ -324,7 +332,13 @@ unsafe impl GlobalAlloc for Locked<BuddyAllocator> {
         let mut allocator = self.lock();
 
         let size = get_clamped_size_from_layout(layout);
+
+        //
         let free_list_index = free_list_index(size);
+        // debug!(
+        //     "alloc: ========================================\n{:?}",
+        //     layout, /* allocator.free_list */
+        // );
 
         let node_to_assign = match allocator.free_list[free_list_index].take() {
             Some(free_node) => {
@@ -339,10 +353,6 @@ unsafe impl GlobalAlloc for Locked<BuddyAllocator> {
             },
         };
 
-        // debug!(
-        //     "alloc: ========================================\n {:?} {:#?}",
-        //     node_to_assign, /* allocator.free_list */ ""
-        // );
         node_to_assign.start_addr as *mut u8
     }
 

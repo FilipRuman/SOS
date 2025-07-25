@@ -5,11 +5,14 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
+use acpi::rsdp;
 use bootloader_api::{
+    BootInfo,
     config::{BootloaderConfig, Mapping},
     entry_point,
     info::MemoryRegions,
 };
+use conquer_once::spin::OnceCell;
 use log::debug;
 use spin::mutex::Mutex;
 
@@ -27,6 +30,10 @@ pub mod qemu;
 pub mod serial;
 pub mod task;
 
+pub fn cpuid() {
+    debug!("cpuid {:?}", x86::cpuid::CpuId::new());
+}
+
 pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     logger::init_logger(log::LevelFilter::Debug);
     let physical_memory_offset = boot_info
@@ -37,10 +44,9 @@ pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
 
     let memory_map = MemoryRegions::from(boot_info.memory_regions.as_mut());
 
-    let (mut mapper, mut frame_allocator) =
-        unsafe { memory::init_mem(physical_memory_offset, memory_map) };
+    unsafe { memory::init_mem(physical_memory_offset, memory_map) };
 
-    interrupts::init(&mut mapper, &mut frame_allocator);
+    allocator::init_heap().expect("heap initialization failed");
 
     let framebuffer = boot_info
         .framebuffer
@@ -50,7 +56,7 @@ pub fn init_kernel(boot_info: &'static mut bootloader_api::BootInfo) {
     graphics::RENDERER
         .get_or_init(move || Mutex::new(graphics::FrameBufferRenderer::new(framebuffer)));
 
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
+    interrupts::init(boot_info.rsdp_addr.take().unwrap() as usize);
 
     debug!("Initialization fished successfully!");
 }

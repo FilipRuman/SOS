@@ -2,6 +2,7 @@ mod FixedSize;
 
 use alloc::{
     alloc::{GlobalAlloc, Layout},
+    borrow::ToOwned,
     boxed::Box,
     string::{String, ToString},
     vec::Vec,
@@ -45,15 +46,18 @@ use x86_64::{
     },
 };
 
-use crate::allocator::FixedSize::BuddyAllocator;
+use crate::{
+    allocator::FixedSize::BuddyAllocator,
+    memory::{self, FRAMES, MAPPER, StaticFrameAllocator},
+};
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 10000 * 1024; // 10000 KiB
 
-pub fn init_heap(
-    mapper: &mut impl Mapper<Size4KiB>,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) -> Result<(), MapToError<Size4KiB>> {
+pub fn init_heap() -> Result<(), MapToError<Size4KiB>> {
+    let mut frame_allocator = StaticFrameAllocator {};
+    let mut mapper = MAPPER.get().expect("Memory was not yet initialized").lock();
+
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
         let heap_end = heap_start + HEAP_SIZE as u64 - 1u64;
@@ -66,7 +70,11 @@ pub fn init_heap(
             .allocate_frame()
             .ok_or(MapToError::FrameAllocationFailed)?;
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
-        unsafe { mapper.map_to(page, frame, flags, frame_allocator)?.flush() };
+        unsafe {
+            mapper
+                .map_to(page, frame, flags, &mut frame_allocator)?
+                .flush()
+        };
     }
 
     unsafe {

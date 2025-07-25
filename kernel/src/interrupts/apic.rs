@@ -1,8 +1,16 @@
+use core::{cell::OnceCell, ptr::NonNull};
+
+use acpi::PhysicalMapping;
+use crossbeam_queue::ArrayQueue;
 use log::{debug, *};
 use x86::apic::ApicControl;
 use x86_64::{
     PhysAddr, VirtAddr,
-    structures::paging::{FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB},
+    structures::paging::{
+        FrameAllocator, Mapper, Page, PageTableFlags, PhysFrame, Size4KiB,
+        mapper::{self, MapToError},
+        page,
+    },
 };
 
 fn io_apic() -> x86::apic::ioapic::IoApic {
@@ -18,18 +26,18 @@ fn xapic() -> x86::apic::xapic::XAPIC {
     x86::apic::xapic::XAPIC::new(slice)
 }
 
-fn init_xapic(
-    mapper: &mut impl Mapper<Size4KiB>,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) {
+fn init_xapic() {
+    let mut mapper = MAPPER.get().expect("memory was not yet initialized").lock();
+    let mut frame_allocator = StaticFrameAllocator {};
+
     let apic_address = VirtAddr::new(LOCAL_APIC_ADDR);
-    let page = Page::containing_address(apic_address);
+    let page: x86_64::structures::paging::Page = Page::containing_address(apic_address);
     let frame = PhysFrame::containing_address(PhysAddr::new(LOCAL_APIC_ADDR));
 
     let flags = PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::WRITABLE;
     unsafe {
         mapper
-            .map_to(page, frame, flags, frame_allocator)
+            .map_to(page, frame, flags, &mut frame_allocator)
             .expect("mapping memory for apic did not succeed")
             .flush()
     };
@@ -81,16 +89,57 @@ lazy_static! {
         idt
     };
 }
+const ACPI_MEMORY_SIZE: usize = 4 * 5 * 1024;
+const ACPI_START_ADDRESS: usize = HEAP_START + HEAP_SIZE + ACPI_MEMORY_SIZE;
+
+// assuming that size of page is 4KB
+lazy_static! {
+    pub static ref ACPI_PAGES: ArrayQueue<Page> = ArrayQueue::new(ACPI_MEMORY_SIZE / (4 * 1024));
+}
+#[derive(Clone)]
+pub struct AcpiHandler {}
+impl acpi::AcpiHandler for AcpiHandler {
+    unsafe fn map_physical_region<T>(
+        &self,
+        physical_address: usize,
+        size: usize,
+    ) -> acpi::PhysicalMapping<Self, T> {
+        debug!("acpi: map_physical_region: size{size}");
+        let mut frame_allocator = StaticFrameAllocator {};
+        let mut mapper = MAPPER.get().expect("Memory was not yet initialized").lock();
+
+        let page = ACPI_PAGES.pop().expect("not enough pages for acpi");
+        let frame = PhysFrame::containing_address(PhysAddr::new(physical_address as u64));
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        unsafe {
+            mapper
+                .map_to(page, frame, flags, &mut frame_allocator)
+                .unwrap()
+                .flush()
+        };
+
+        unsafe {
+            PhysicalMapping::new(
+                physical_address,
+                NonNull::new(page.start_address().as_mut_ptr()).unwrap(),
+                size,
+                4 * 1024,
+                AcpiHandler {},
+            )
+        }
+    }
+
+    fn unmap_physical_region<T>(region: &acpi::PhysicalMapping<Self, T>) {
+        // TODO: not really needed, i don't use this part of memory for anything else
+    }
+}
 
 pub const PIC_1_OFFSET: u8 = 32;
 
-pub fn init(
-    mapper: &mut impl Mapper<Size4KiB>,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) {
-    init_xapic(mapper, frame_allocator);
+pub fn init(rsdp: usize) {
+    init_xapic();
 
-    map_memory_for_io_apic(mapper, frame_allocator);
+    map_memory_for_io_apic();
 
     IDT.load();
 
@@ -104,21 +153,36 @@ pub fn init(
 
     debug!("Hardware interrupts initialized!");
 
-    debug!("cpuid {:?}", x86::cpuid::CpuId::new());
+    let page_range = {
+        let start = VirtAddr::new(ACPI_START_ADDRESS as u64);
+        let end = start + ACPI_MEMORY_SIZE as u64 - 1u64;
+        let start_page = Page::containing_address(start);
+        let end_page = Page::containing_address(end);
+        Page::range_inclusive(start_page, end_page)
+    };
+    for page in page_range {
+        ACPI_PAGES.push(page);
+    }
+
+    debug!("acpi init",);
+    let acpi = unsafe {
+        acpi::AcpiTables::from_rsdp(AcpiHandler {}, rsdp).expect("reading acpi did not succed!")
+    };
+    debug!("acpi: {:?}", acpi.platform_info());
 }
 
-fn map_memory_for_io_apic(
-    mapper: &mut impl Mapper<Size4KiB>,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
-) {
+fn map_memory_for_io_apic() {
+    let mut mapper = MAPPER.get().expect("memory was not yet initialized").lock();
+    let mut frame_allocator = StaticFrameAllocator {};
+
     let io_apic_address = VirtAddr::new(IOAPIC_ADDR as u64);
-    let page = Page::containing_address(io_apic_address);
+    let page: x86_64::structures::paging::Page = Page::containing_address(io_apic_address);
     let frame = PhysFrame::containing_address(PhysAddr::new(IOAPIC_ADDR as u64));
     let flags = PageTableFlags::PRESENT | PageTableFlags::NO_CACHE | PageTableFlags::WRITABLE;
 
     unsafe {
         mapper
-            .map_to(page, frame, flags, frame_allocator)
+            .map_to(page, frame, flags, &mut frame_allocator)
             .expect("mapping memory for io apic did not succeed")
             .flush()
     };
@@ -126,7 +190,11 @@ fn map_memory_for_io_apic(
 
 use x86_64::structures::idt::{InterruptDescriptorTable, PageFaultErrorCode};
 
-use crate::hlt_loop;
+use crate::{
+    allocator::{HEAP_SIZE, HEAP_START},
+    hlt_loop,
+    memory::{MAPPER, StaticFrameAllocator},
+};
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     xapic().eoi();
 }
