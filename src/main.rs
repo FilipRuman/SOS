@@ -20,6 +20,7 @@ fn main() {
     cmd.arg("-device")
         .arg("isa-debug-exit,iobase=0xf4,iosize=0x04");
 
+    cmd.arg("-smp").arg("4");
     // cmd.arg("-d").arg("int");
     // cmd.arg("-D").arg("qemu.log");
     let mut child = cmd.spawn().unwrap();

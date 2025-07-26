@@ -60,6 +60,7 @@ impl Stream for LogStream {
 use futures_util::stream::StreamExt;
 
 pub(crate) async fn handel_log_que() {
+
     let mut stream = LogStream::new();
     while let Some(log) = stream.next().await {
         for listener in ON_LOG_LISTENERS.lock().iter() {

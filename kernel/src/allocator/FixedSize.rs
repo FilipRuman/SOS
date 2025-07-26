@@ -3,9 +3,6 @@ use core::{
     ptr,
 };
 
-use alloc::{format, string::ToString};
-use log::debug;
-
 use crate::allocator::Locked;
 
 #[repr(C)]

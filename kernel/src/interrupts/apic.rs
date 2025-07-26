@@ -3,7 +3,7 @@ use core::{cell::OnceCell, ptr::NonNull};
 use acpi::PhysicalMapping;
 use crossbeam_queue::ArrayQueue;
 use log::{debug, *};
-use x86::apic::ApicControl;
+use x86::apic::{self, ApicControl, ApicId};
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
@@ -89,7 +89,7 @@ lazy_static! {
         idt
     };
 }
-const ACPI_MEMORY_SIZE: usize = 4 * 5 * 1024;
+const ACPI_MEMORY_SIZE: usize = 4 * 8 * 1024;
 const ACPI_START_ADDRESS: usize = HEAP_START + HEAP_SIZE + ACPI_MEMORY_SIZE;
 
 // assuming that size of page is 4KB
@@ -168,6 +168,16 @@ pub fn init(rsdp: usize) {
     let acpi = unsafe {
         acpi::AcpiTables::from_rsdp(AcpiHandler {}, rsdp).expect("reading acpi did not succed!")
     };
+
+    let platform_info = acpi.platform_info().unwrap();
+    let processor_info = platform_info.processor_info.unwrap();
+    let processors = processor_info.application_processors;
+
+    unsafe { xapic().ipi_startup(ApicId::XApic(0), 0x08) };
+    debug!("boot processor: {:?}", processor_info.boot_processor);
+    for proc in processors.iter() {
+        debug!("processor : {proc:?}");
+    }
     debug!("acpi: {:?}", acpi.platform_info());
 }
 
