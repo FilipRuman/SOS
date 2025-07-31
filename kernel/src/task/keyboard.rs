@@ -14,7 +14,7 @@ pub(crate) fn add_scancode(scancode: u8) {
         if let Err(_) = queue.push(scancode) {
             warn!("scancode queue full; dropping keyboard input");
         } else {
-            WAKER.wake(); // new
+            WAKER.wake(); 
         }
     } else {
         warn!("scancode queue uninitialized");
@@ -86,9 +86,12 @@ pub(crate) async fn print_keypresses() {
                 for listener in ON_KEY_PRESSED_LISTENERS.lock().iter() {
                     listener(&key);
                 }
+
+
             }
         }
     }
+
 }
 pub type OnKeyFunction = fn(&DecodedKey);
 pub static ON_KEY_PRESSED_LISTENERS: Mutex<Vec<OnKeyFunction>> = Mutex::new(Vec::new());

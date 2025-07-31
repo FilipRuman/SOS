@@ -48,12 +48,8 @@ use x86_64::{
 
 use crate::{
     allocator::FixedSize::BuddyAllocator,
-    memory::{self, FRAMES, MAPPER, StaticFrameAllocator},
+    memory::{self, FRAMES, HEAP_SIZE, HEAP_START, MAPPER, StaticFrameAllocator},
 };
-
-pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 10000 * 1024; // 10000 KiB
-
 pub fn init_heap() -> Result<(), MapToError<Size4KiB>> {
     let mut frame_allocator = StaticFrameAllocator {};
     let mut mapper = MAPPER.get().expect("Memory was not yet initialized").lock();

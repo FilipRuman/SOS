@@ -65,6 +65,38 @@ pub fn disable_pic() {
     // }
     log::debug!("pic was disabled!");
 }
+
+use x86::io::{inb, outb};
+const PIT_CHANNEL_0: u16 = 0x40;
+const PIT_COMMAND: u16 = 0x43;
+const PIT_FREQUENCY: u32 = 1_193_182;
+
+pub fn calibrate_tsc() -> u64 {
+    unsafe {
+        let start = x86::time::rdtsc();
+        pit_wait_1ms();
+        let end = x86::time::rdtsc();
+        end - start
+    }
+}
+
+unsafe fn pit_wait_1ms() {
+    let count: u16 = (PIT_FREQUENCY / 1000) as u16; // ≈1193 ticks for 1ms
+
+    // Set PIT to Mode 0 (interrupt on terminal count), binary counting
+    outb(PIT_COMMAND, 0b0011_0000); // Channel 0, Access mode: lobyte/hibyte, Mode 0
+
+    // Load the count (low byte first, then high byte)
+    outb(PIT_CHANNEL_0, count as u8);
+    outb(PIT_CHANNEL_0, (count >> 8) as u8);
+
+    // Wait until countdown finishes: bit 7 of status is OUT flag
+    // Since Mode 0, OUT becomes high when countdown reaches zero
+    while (inb(PIT_CHANNEL_0) & 0x80) == 0 {
+        core::hint::spin_loop(); // Wait
+    }
+}
+
 pub fn init() {
     // x86_64::ap
     log::debug!("IDT initialized!");
@@ -116,7 +148,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
 }
-
+//
 // extern "x86-interrupt" fn double_fault_handler(
 //     stack_frame: InterruptStackFrame,
 //     _error_code: u64,

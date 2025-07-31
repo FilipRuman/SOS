@@ -1,9 +1,15 @@
-use core::{cell::OnceCell, ptr::NonNull};
+use core::{ptr::NonNull, sync::atomic::AtomicU64};
 
-use acpi::PhysicalMapping;
+use acpi::{AcpiTable, PhysicalMapping, PlatformInfo};
+use conquer_once::spin::OnceCell;
 use crossbeam_queue::ArrayQueue;
 use log::{debug, *};
-use x86::apic::{self, ApicControl, ApicId};
+use x86::{
+    apic::{self, ApicControl, ApicId},
+    cpuid::{self, CpuId},
+    msr::{IA32_TSC_DEADLINE, wrmsr},
+    time::rdtsc,
+};
 use x86_64::{
     PhysAddr, VirtAddr,
     structures::paging::{
@@ -13,10 +19,10 @@ use x86_64::{
     },
 };
 
-fn io_apic() -> x86::apic::ioapic::IoApic {
+pub fn io_apic() -> x86::apic::ioapic::IoApic {
     unsafe { x86::apic::ioapic::IoApic::new(IOAPIC_ADDR) }
 }
-fn xapic() -> x86::apic::xapic::XAPIC {
+pub fn xapic() -> x86::apic::xapic::XAPIC {
     let apic_address = VirtAddr::new(LOCAL_APIC_ADDR);
     let pointer = apic_address.as_mut_ptr();
 
@@ -60,9 +66,15 @@ pub fn setup_xapic_timer() {
     let lvt_value = (1 << 17) | (vector as u32); // Periodic | vector
     write_lapic(x86::apic::xapic::XAPIC_LVT_TIMER as u64, lvt_value);
 
-    let init_count: u32 = 10_000_000;
+    // wrote by hand, this looks good but provably not right
+    let init_count: u32 = 10_000;
     // Initial Count: how long until interrupt fires
     write_lapic(x86::apic::xapic::XAPIC_TIMER_INIT_COUNT as u64, init_count);
+}
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    // log::debug!("timer!");
+    crate::time::on_1ms_timer_interrupt();
+    xapic().eoi();
 }
 
 // WARN: THIS MIGHT NOT BE TRUE!
@@ -86,18 +98,18 @@ lazy_static! {
         idt[KEYBOARD_IRQ + IRQ_BASE].set_handler_fn(keyboard_interrupt_handler);
 
         idt.page_fault.set_handler_fn(page_fault_handler);
+        idt.double_fault.set_handler_fn(double_fault_handler);
         idt
     };
 }
-const ACPI_MEMORY_SIZE: usize = 4 * 8 * 1024;
-const ACPI_START_ADDRESS: usize = HEAP_START + HEAP_SIZE + ACPI_MEMORY_SIZE;
-
 // assuming that size of page is 4KB
 lazy_static! {
     pub static ref ACPI_PAGES: ArrayQueue<Page> = ArrayQueue::new(ACPI_MEMORY_SIZE / (4 * 1024));
 }
 #[derive(Clone)]
+
 pub struct AcpiHandler {}
+
 impl acpi::AcpiHandler for AcpiHandler {
     unsafe fn map_physical_region<T>(
         &self,
@@ -105,6 +117,7 @@ impl acpi::AcpiHandler for AcpiHandler {
         size: usize,
     ) -> acpi::PhysicalMapping<Self, T> {
         debug!("acpi: map_physical_region: size{size}");
+
         let mut frame_allocator = StaticFrameAllocator {};
         let mut mapper = MAPPER.get().expect("Memory was not yet initialized").lock();
 
@@ -136,7 +149,7 @@ impl acpi::AcpiHandler for AcpiHandler {
 
 pub const PIC_1_OFFSET: u8 = 32;
 
-pub fn init(rsdp: usize) {
+pub fn init(rsdp: usize) -> u8 {
     init_xapic();
 
     map_memory_for_io_apic();
@@ -164,21 +177,30 @@ pub fn init(rsdp: usize) {
         ACPI_PAGES.push(page);
     }
 
+    init_acpi(rsdp)
+}
+
+pub(crate) fn init_acpi(rsdp: usize) -> u8 {
     debug!("acpi init",);
     let acpi = unsafe {
         acpi::AcpiTables::from_rsdp(AcpiHandler {}, rsdp).expect("reading acpi did not succed!")
     };
 
+    debug!("0");
     let platform_info = acpi.platform_info().unwrap();
+
+    debug!("1");
     let processor_info = platform_info.processor_info.unwrap();
     let processors = processor_info.application_processors;
 
-    unsafe { xapic().ipi_startup(ApicId::XApic(0), 0x08) };
     debug!("boot processor: {:?}", processor_info.boot_processor);
+    let cpu_count = processors.len() as u8;
     for proc in processors.iter() {
         debug!("processor : {proc:?}");
     }
     debug!("acpi: {:?}", acpi.platform_info());
+
+    cpu_count
 }
 
 fn map_memory_for_io_apic() {
@@ -201,14 +223,10 @@ fn map_memory_for_io_apic() {
 use x86_64::structures::idt::{InterruptDescriptorTable, PageFaultErrorCode};
 
 use crate::{
-    allocator::{HEAP_SIZE, HEAP_START},
-    hlt_loop,
-    memory::{MAPPER, StaticFrameAllocator},
+    cpuid, hlt_loop, interrupts,
+    memory::{ACPI_MEMORY_SIZE, ACPI_START_ADDRESS, MAPPER, StaticFrameAllocator},
+    time,
 };
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    xapic().eoi();
-}
-
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
@@ -231,14 +249,13 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
     xapic().eoi();
 }
-// not working due to recent regression in nightly, have to try later
-// extern "x86-interrupt" fn double_fault_handler(
-//     stack_frame: InterruptStackFrame,
-//     _error_code: u64,
-// ) -> ! {
-//     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
-//     loop {}
-// }
+extern "x86-interrupt" fn double_fault_handler(
+    stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) -> ! {
+    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    loop {}
+}
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     log::error!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
